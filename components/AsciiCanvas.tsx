@@ -28,11 +28,19 @@ export default function AsciiCanvas({
     const buffer: Buffer = []
 
     let cellW = 0
-    let prevW = 0
-    let prevH = 0
+    let cols = 0
+    let rows = 0
+    let viewW = 0
+    let viewH = 0
+    let prevDpr = 0
+    let colX = new Float32Array(0)
+    let rowY = new Float32Array(0)
     let raf = 0
     let t0 = 0
     let frame = 0
+
+    ctx.font = font
+    ctx.textBaseline = 'top'
 
     const onMove = (e: MouseEvent) => {
       pointer.x = cellW ? e.clientX / cellW : -1
@@ -43,6 +51,45 @@ export default function AsciiCanvas({
     const onDown = () => (pointer.pressed = true)
     const onUp = () => (pointer.pressed = false)
 
+    const resize = () => {
+      const { devicePixelRatio: dpr, innerHeight: h, innerWidth: w } = window
+
+      if (w === viewW && h === viewH && dpr === prevDpr) {
+        return
+      }
+
+      viewW = w
+      viewH = h
+      prevDpr = dpr
+
+      canvas.width = Math.max(1, Math.floor(w * dpr))
+      canvas.height = Math.max(1, Math.floor(h * dpr))
+      canvas.style.width = `${w}px`
+      canvas.style.height = `${h}px`
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+      if (!cellW) {
+        cellW = ctx.measureText('M').width
+      }
+
+      cols = Math.max(1, Math.ceil(w / cellW))
+      rows = Math.max(1, Math.ceil(h / fontSize))
+      buffer.length = cols * rows
+
+      colX = new Float32Array(cols)
+
+      for (let x = 0; x < cols; x++) {
+        colX[x] = x * cellW
+      }
+
+      rowY = new Float32Array(rows)
+
+      for (let y = 0; y < rows; y++) {
+        rowY[y] = y * fontSize
+      }
+    }
+
     const render = (t: number) => {
       raf = requestAnimationFrame(render)
 
@@ -50,57 +97,75 @@ export default function AsciiCanvas({
         t0 = t
       }
 
-      const { devicePixelRatio: dpr, innerHeight: h, innerWidth: w } = window
-
-      if (w !== prevW || h !== prevH) {
-        canvas.width = w * dpr
-        canvas.height = h * dpr
-        canvas.style.width = `${w}px`
-        canvas.style.height = `${h}px`
-        prevW = w
-        prevH = h
-        cellW = 0
+      if (!cols || !rows) {
+        return
       }
 
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.fillStyle = bg
-      ctx.fillRect(0, 0, w, h)
-      ctx.font = font
-      ctx.textBaseline = 'top'
-
-      if (!cellW) {
-        cellW = ctx.measureText('M').width
-      }
-
-      const cols = Math.ceil(w / cellW)
-      const rows = Math.ceil(h / fontSize)
+      ctx.fillRect(0, 0, viewW, viewH)
       const time = (t - t0) * speed
       const context: Context = { cols, frame: frame++, rows, time }
 
-      buffer.length = cols * rows
+      let lastFill = bg
 
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-          const i = y * cols + x
-          const result = main({ x, y }, context, pointer, buffer)
-
-          buffer[i] = typeof result === 'string' ? { char: result } : result
+      const setFill = (color: string) => {
+        if (color !== lastFill) {
+          ctx.fillStyle = color
+          lastFill = color
         }
       }
 
-      post?.(context, pointer, buffer)
+      if (post) {
+        for (let y = 0; y < rows; y++) {
+          for (let x = 0; x < cols; x++) {
+            const i = y * cols + x
+            const result = main({ x, y }, context, pointer, buffer)
 
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-          const cell = buffer[y * cols + x]
-
-          if (cell.bg) {
-            ctx.fillStyle = cell.bg
-            ctx.fillRect(x * cellW, y * fontSize, cellW, fontSize)
+            buffer[i] = typeof result === 'string' ? { char: result } : result
           }
+        }
 
-          ctx.fillStyle = cell.fg ?? fg
-          ctx.fillText(cell.char, x * cellW, y * fontSize)
+        post(context, pointer, buffer)
+
+        for (let y = 0; y < rows; y++) {
+          const py = rowY[y]
+
+          for (let x = 0; x < cols; x++) {
+            const cell = buffer[y * cols + x]
+            const px = colX[x]
+
+            if (cell.bg && cell.bg !== bg) {
+              setFill(cell.bg)
+              ctx.fillRect(px, py, cellW, fontSize)
+            }
+
+            if (cell.char !== ' ') {
+              setFill(cell.fg ?? fg)
+              ctx.fillText(cell.char, px, py)
+            }
+          }
+        }
+      } else {
+        for (let y = 0; y < rows; y++) {
+          const py = rowY[y]
+
+          for (let x = 0; x < cols; x++) {
+            const i = y * cols + x
+            const result = main({ x, y }, context, pointer, buffer)
+            const cell = typeof result === 'string' ? { char: result } : result
+
+            buffer[i] = cell
+
+            if (cell.bg && cell.bg !== bg) {
+              setFill(cell.bg)
+              ctx.fillRect(colX[x], py, cellW, fontSize)
+            }
+
+            if (cell.char !== ' ') {
+              setFill(cell.fg ?? fg)
+              ctx.fillText(cell.char, colX[x], py)
+            }
+          }
         }
       }
     }
@@ -109,6 +174,8 @@ export default function AsciiCanvas({
     addEventListener('mouseleave', onLeave)
     addEventListener('mousedown', onDown)
     addEventListener('mouseup', onUp)
+    addEventListener('resize', resize)
+    resize()
     raf = requestAnimationFrame(render)
 
     return () => {
@@ -116,6 +183,7 @@ export default function AsciiCanvas({
       removeEventListener('mouseleave', onLeave)
       removeEventListener('mousedown', onDown)
       removeEventListener('mouseup', onUp)
+      removeEventListener('resize', resize)
       cancelAnimationFrame(raf)
     }
   }, [bg, fg, fontSize, main, post, speed])

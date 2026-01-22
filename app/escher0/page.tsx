@@ -11,10 +11,6 @@ import type { MainFn } from '@/types/ascii'
 const density = ' ·:╱╲╳◢◣◆▓█'
 const glitch = '!@#$%^&*()_+-=[]{}|;:,.<>?/~`░▒▓█▀▄▌▐■□▪▫●○◐◑◒◓'
 
-// phi for harmonic timing
-const PHI = 1.618033988749
-const PHI_INV = 0.618033988749
-
 const invert = (hex: string, alpha = 1) => {
   const c = hex.replace('#', '')
   const r = 255 - parseInt(c.slice(0, 2), 16)
@@ -26,9 +22,9 @@ const invert = (hex: string, alpha = 1) => {
 
 const gnarl = (x: number, y: number, s: number, n: number, t: number) => {
   for (let i = 0; i < n; i++) {
-    const phase = t + i * PHI_INV
+    const phase = t + i * 0.3
     const nx = x - s * Math.sin(y + Math.sin(y + phase))
-    const ny = y + s * Math.cos(x + Math.cos(x - phase * PHI))
+    const ny = y + s * Math.cos(x + Math.cos(x - phase))
     x = nx
     y = ny
   }
@@ -97,25 +93,21 @@ export default function Page() {
         // gnarl warp with time-varying phase
         const g = gnarl(px, py, fluid, iters, t)
 
-        // breathing radius - base rhythm
-        const breath = Math.sin(t * PHI) * 0.08
+        // breathing radius
+        const breath = Math.sin(t * 2) * 0.08
 
         // tessellate in warped space
         const cell = 0.5 + breath * 0.3
         const gx = ((((g.x % cell) + cell) % cell) - cell / 2) * 2
         const gy = ((((g.y % cell) + cell) % cell) - cell / 2) * 2
 
-        // morphing shapes - phi relationship to breath
-        const morph = Math.sin(t * PHI * PHI_INV) * 0.5 + 0.5
+        // morphing shapes
+        const morph = Math.sin(t * 1.5) * 0.5 + 0.5
         const d1 = sdHexagon(vec2(gx, gy), 0.22 + breath)
         const d2 = sdCircle(vec2(gx * 1.2, gy * 0.8), 0.15 * (1 + morph * 0.5))
 
-        // orbiting circle - phi spiral timing
         const d3 = sdCircle(
-          vec2(
-            gx + Math.sin(t * PHI_INV) * 0.1,
-            gy + Math.cos(t * PHI_INV * PHI_INV) * 0.1
-          ),
+          vec2(gx + Math.sin(t) * 0.1, gy + Math.cos(t * 1.3) * 0.1),
           0.1
         )
 
@@ -123,12 +115,12 @@ export default function Page() {
         let d = opSmoothUnion(d1, d2, 0.35 + morph * 0.15)
         d = opSmoothUnion(d, d3, 0.4)
 
-        // undulating ripple - phi relationship
+        // undulating ripple
         const r = Math.sqrt(px * px + py * py)
-        d += Math.sin(r * 8 - t * PHI * 2 + g.x * PHI) * 0.03
+        d += Math.sin(r * 8 - t * 4 + g.x * 2) * 0.03
 
-        // parallax inversion layer - phi-inverse time relationship
-        const g2 = gnarl(-px * 1.5, -py * 1.5, fluid * 0.7, iters, -t * PHI_INV)
+        // parallax inversion layer - inverted coords, slower time, deeper scale
+        const g2 = gnarl(-px * 1.5, -py * 1.5, fluid * 0.7, iters, -t * 0.6)
         const cell2 = 0.35
         const gx2 = ((((g2.x % cell2) + cell2) % cell2) - cell2 / 2) * 2
         const gy2 = ((((g2.y % cell2) + cell2) % cell2) - cell2 / 2) * 2
