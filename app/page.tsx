@@ -1,11 +1,9 @@
 'use client'
 
 import { useControls } from 'leva'
-import { useSearchParams } from 'next/navigation'
 import { useMemo } from 'react'
 
 import AsciiCanvas from '@/components/AsciiCanvas'
-import AsciiCanvasGL from '@/components/AsciiCanvasGL'
 import { Noise } from '@/components/Noise'
 import type { MainFn } from '@/types/ascii'
 
@@ -14,8 +12,6 @@ const chars = ' ░▒▓█'
 const hex = (s: string, i: number) => parseInt(s.slice(i, i + 2), 16)
 
 export default function Page() {
-  const gl = useSearchParams().has('gl')
-
   const { bg, color1, color2, speed } = useControls({
     bg: { label: 'Background', value: '#fff8f5' },
     color1: { label: 'Color 1', value: '#c7077b' },
@@ -62,12 +58,9 @@ export default function Page() {
     }
   }, [bg, color1, color2, speed])
 
-  const Canvas = gl ? AsciiCanvasGL : AsciiCanvas
-  const props = gl ? { chars, main } : { main }
-
   return (
     <>
-      <Canvas {...props} />
+      <AsciiCanvas {...{ main }} />
       <Noise />
     </>
   )
