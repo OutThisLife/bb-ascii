@@ -45,6 +45,22 @@ export const mix = (a: number, b: number, t: number) => a * (1 - t) + b * t
 export const sign = (n: number) => (n > 0 ? 1 : n < 0 ? -1 : 0)
 export const step = (edge: number, x: number) => (x < edge ? 0 : 1)
 
+export const PHI = 1.618033988749
+
+export const tri = (t: number) => 1 - Math.abs(2 * (((t % 1) + 1) % 1) - 1)
+
+export const easeSin = (t: number) => {
+  const x = tri(t)
+
+  return (-(Math.cos(Math.PI * x) - 1) / 2) * 2 - 1
+}
+
+export const easeCubic = (t: number) => {
+  const x = tri(t)
+
+  return (x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2) * 2 - 1
+}
+
 // SDF primitives
 export const sdCircle = (p: Vec2, r: number) => length(p) - r
 

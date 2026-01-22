@@ -5,20 +5,20 @@ import { useMemo } from 'react'
 
 import AsciiCanvas from '@/components/AsciiCanvas'
 import { Noise } from '@/components/Noise'
-import { opSmoothUnion, sdBox, sdCircle, sdHexagon, vec2 } from '@/lib/ops'
+import {
+  easeCubic,
+  easeSin,
+  opSmoothUnion,
+  PHI,
+  sdBox,
+  sdCircle,
+  sdHexagon,
+  vec2
+} from '@/lib/ops'
 import type { MainFn } from '@/types/ascii'
 
 const CHARS = ' ·:╱╲╳◢◣◆▓█'
 const GLITCH = '!@#$%^&*()_+-=[]{}|;:,.<>?/~`░▒▓█▀▄▌▐■□▪▫●○◐◑◒◓'
-const PHI = 1.618033988749
-
-const ease = (t: number, fn: (x: number) => number) =>
-  fn(((t % 1) + 1) % 1) * 2 - 1
-
-const easeSin = (t: number) => ease(t, x => -(Math.cos(Math.PI * x) - 1) / 2)
-
-const easeCubic = (t: number) =>
-  ease(t, x => (x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2))
 
 const invert = (hex: string, a = 1) => {
   const c = hex.replace('#', '')
