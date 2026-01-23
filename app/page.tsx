@@ -3,31 +3,13 @@
 import { button, useControls } from 'leva'
 import { useEffect, useRef } from 'react'
 
-type Seg = {
-  x: number
-  y: number
-  p: number
-  h: number
-  s: number
-  l: number
-  b: number
-  c?: string
-  t?: number
-}
-type Frog = { x: number; y: number; h: number; b: number }
-type Cloud = {
-  x: number
-  y: number
-  w: number
-  dir: number
-  speed: number
-  seed: number
-}
-
 const CHARS = ' .·:+=░▒▓█'
 const CHARS_WC = ' .·:;+=░▒▓█'
+const CHARS_MAX = CHARS.length - 1
 const PI = Math.PI
 const FONT_SIZE = 12
+const FULLSCREEN_QUAD = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1])
+const GRASS_CHARS = ['|', '/', '\\', '┃', '╱', '╲']
 
 const rand = (s: number) => (((Math.sin(s * 9999) * 10000) % 1) + 1) % 1
 const noise = (x: number, s: number) => rand(~~x * 73.97 + s) * 2 - 1
@@ -446,23 +428,9 @@ export default function Page() {
   const glCanvas = useRef<HTMLCanvasElement | null>(null)
   const fireflyCanvas = useRef<HTMLCanvasElement | null>(null)
 
-  const fireflyGlRef = useRef<{
-    gl: WebGLRenderingContext
-    prog: WebGLProgram
-  } | null>(null)
+  const fireflyGlRef = useRef<FireflyRef | null>(null)
 
-  const glRef = useRef<{
-    gl: WebGLRenderingContext
-    diffuseProg: WebGLProgram
-    outputProg: WebGLProgram
-    srcTex: WebGLTexture
-    fbo: [
-      { fb: WebGLFramebuffer; tex: WebGLTexture },
-      { fb: WebGLFramebuffer; tex: WebGLTexture }
-    ]
-    pingPong: number
-    firstFrame: boolean
-  } | null>(null)
+  const glRef = useRef<GlRef | null>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -487,6 +455,8 @@ export default function Page() {
     let colX = new Float32Array(0),
       rowY = new Float32Array(0)
 
+    let asciiCtx: CanvasRenderingContext2D | null = null
+
     let t0 = 0,
       raf = 0
 
@@ -494,7 +464,7 @@ export default function Page() {
     asciiCanvas.current = document.createElement('canvas')
     glCanvas.current = document.createElement('canvas')
 
-    const asciiCtx = asciiCanvas.current.getContext('2d')!
+    asciiCtx = asciiCanvas.current.getContext('2d')!
     asciiCtx.font = font
     asciiCtx.textBaseline = 'top'
 
@@ -502,19 +472,40 @@ export default function Page() {
       preserveDrawingBuffer: true
     })!
 
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1)
+
     const diffuseProg = createProgram(gl, wcVert, wcDiffuseFrag)
     const outputProg = createProgram(gl, wcVert, wcOutputFrag)
     const srcTex = gl.createTexture()!
 
+    gl.bindTexture(gl.TEXTURE_2D, srcTex)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer())
-    gl.bufferData(
-      gl.ARRAY_BUFFER,
-      new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
-      gl.STATIC_DRAW
-    )
+    gl.bufferData(gl.ARRAY_BUFFER, FULLSCREEN_QUAD, gl.STATIC_DRAW)
     const aPos = gl.getAttribLocation(diffuseProg, 'aPos')
     gl.enableVertexAttribArray(aPos)
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0)
+
+    const diffuseUniforms = {
+      uBleed: gl.getUniformLocation(diffuseProg, 'uBleed')!,
+      uFirst: gl.getUniformLocation(diffuseProg, 'uFirst')!,
+      uPrev: gl.getUniformLocation(diffuseProg, 'uPrev')!,
+      uRes: gl.getUniformLocation(diffuseProg, 'uRes')!,
+      uSource: gl.getUniformLocation(diffuseProg, 'uSource')!,
+      uSplatter: gl.getUniformLocation(diffuseProg, 'uSplatter')!,
+      uTime: gl.getUniformLocation(diffuseProg, 'uTime')!
+    }
+
+    const outputUniforms = {
+      uDiffuse: gl.getUniformLocation(outputProg, 'uDiffuse')!,
+      uEdge: gl.getUniformLocation(outputProg, 'uEdge')!,
+      uPaper: gl.getUniformLocation(outputProg, 'uPaper')!,
+      uRes: gl.getUniformLocation(outputProg, 'uRes')!
+    }
 
     glRef.current = {
       diffuseProg,
@@ -526,7 +517,8 @@ export default function Page() {
       gl,
       outputProg,
       pingPong: 0,
-      srcTex
+      srcTex,
+      uniforms: { diffuse: diffuseUniforms, output: outputUniforms }
     }
 
     // Firefly canvas
@@ -544,17 +536,21 @@ export default function Page() {
 
     const ffProg = createProgram(ffGl, wcVert, fireflyFrag)
     ffGl.bindBuffer(ffGl.ARRAY_BUFFER, ffGl.createBuffer())
-    ffGl.bufferData(
-      ffGl.ARRAY_BUFFER,
-      new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
-      ffGl.STATIC_DRAW
-    )
+    ffGl.bufferData(ffGl.ARRAY_BUFFER, FULLSCREEN_QUAD, ffGl.STATIC_DRAW)
     const ffAPos = ffGl.getAttribLocation(ffProg, 'aPos')
     ffGl.enableVertexAttribArray(ffAPos)
     ffGl.vertexAttribPointer(ffAPos, 2, ffGl.FLOAT, false, 0, 0)
     ffGl.enable(ffGl.BLEND)
     ffGl.blendFunc(ffGl.SRC_ALPHA, ffGl.ONE)
-    fireflyGlRef.current = { gl: ffGl, prog: ffProg }
+    ffGl.clearColor(0, 0, 0, 0)
+
+    const ffUniforms = {
+      uRes: ffGl.getUniformLocation(ffProg, 'uRes')!,
+      uSeed: ffGl.getUniformLocation(ffProg, 'uSeed')!,
+      uTime: ffGl.getUniformLocation(ffProg, 'uTime')!
+    }
+
+    fireflyGlRef.current = { gl: ffGl, prog: ffProg, uniforms: ffUniforms }
 
     const generateScene = (cols: number, rows: number) => {
       const groundY = ~~(rows * 0.7),
@@ -1002,13 +998,14 @@ export default function Page() {
     }
 
     const renderToBuffers = (time: number) => {
-      const { cols, rows } = dims.current
+      const { cols, groundY, rows } = dims.current
 
       const g = grid.current!,
         hG = hueG.current!,
         sG = satG.current!,
         lG = lumG.current!,
-        cG = charG.current!
+        cG = charG.current!,
+        segList = segs.current
 
       g.fill(0)
       hG.fill(0)
@@ -1016,7 +1013,8 @@ export default function Page() {
       lG.fill(0)
       cG.fill(null)
 
-      for (const seg of segs.current) {
+      for (let i = 0, l = segList.length; i < l; i++) {
+        const seg = segList[i]
         const age = time - seg.b
 
         if (age < 0) {
@@ -1071,7 +1069,10 @@ export default function Page() {
       }
 
       // Clouds
-      for (const cloud of clouds.current) {
+      const cloudList = clouds.current
+
+      for (let i = 0, l = cloudList.length; i < l; i++) {
+        const cloud = cloudList[i]
         const drift = time * cloud.speed * cloud.dir
 
         const cx =
@@ -1109,8 +1110,10 @@ export default function Page() {
       }
 
       // Frogs (in watercolor pass - skip first, it renders on top)
-      for (let fi = 1; fi < frogs.current.length; fi++) {
-        const frog = frogs.current[fi]
+      const frogList = frogs.current
+
+      for (let fi = 1, l = frogList.length; fi < l; fi++) {
+        const frog = frogList[fi]
         const age = time - frog.b
 
         if (age < 0) {
@@ -1168,15 +1171,11 @@ export default function Page() {
         lG = lumG.current!,
         cG = charG.current!
 
-      const aCtx = asciiCanvas.current!.getContext('2d')!
+      const aCtx = asciiCtx!,
+        aCanvas = asciiCanvas.current!
 
       aCtx.fillStyle = paletteRef.current.bg
-      aCtx.fillRect(
-        0,
-        0,
-        asciiCanvas.current!.width,
-        asciiCanvas.current!.height
-      )
+      aCtx.fillRect(0, 0, aCanvas.width, aCanvas.height)
 
       for (let y = 0; y < rows; y++) {
         for (let x = 0; x < cols; x++) {
@@ -1185,7 +1184,7 @@ export default function Page() {
           if (g[i] > 0.005) {
             aCtx.fillStyle = hsl(hG[i], sG[i], lG[i])
             aCtx.fillText(
-              cG[i] || CHARS[~~(lG[i] * (CHARS.length - 1))],
+              cG[i] || CHARS[~~(lG[i] * CHARS_MAX)],
               x * cellW,
               y * FONT_SIZE
             )
@@ -1199,14 +1198,14 @@ export default function Page() {
       params: { bleed: number; edge: number; paper: number; splatter: number }
     ) => {
       const ref = glRef.current!
-      const { diffuseProg, fbo, gl, outputProg, srcTex } = ref
+      const { diffuseProg, fbo, gl, outputProg, srcTex, uniforms } = ref
+      const { diffuse, output } = uniforms
 
       const glC = glCanvas.current!,
         w = glC.width,
         h = glC.height
 
       gl.bindTexture(gl.TEXTURE_2D, srcTex)
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1)
       gl.texImage2D(
         gl.TEXTURE_2D,
         0,
@@ -1215,20 +1214,13 @@ export default function Page() {
         gl.UNSIGNED_BYTE,
         asciiCanvas.current!
       )
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
       gl.viewport(0, 0, w, h)
 
       gl.useProgram(diffuseProg)
-      gl.uniform2f(gl.getUniformLocation(diffuseProg, 'uRes'), w, h)
-      gl.uniform1f(gl.getUniformLocation(diffuseProg, 'uTime'), time * 0.001)
-      gl.uniform1f(gl.getUniformLocation(diffuseProg, 'uBleed'), params.bleed)
-      gl.uniform1f(
-        gl.getUniformLocation(diffuseProg, 'uSplatter'),
-        params.splatter
-      )
+      gl.uniform2f(diffuse.uRes, w, h)
+      gl.uniform1f(diffuse.uTime, time * 0.001)
+      gl.uniform1f(diffuse.uBleed, params.bleed)
+      gl.uniform1f(diffuse.uSplatter, params.splatter)
 
       for (let i = 0; i < 6; i++) {
         const src = ref.pingPong,
@@ -1237,14 +1229,11 @@ export default function Page() {
         gl.bindFramebuffer(gl.FRAMEBUFFER, fbo[dst].fb)
         gl.activeTexture(gl.TEXTURE0)
         gl.bindTexture(gl.TEXTURE_2D, ref.firstFrame ? srcTex : fbo[src].tex)
-        gl.uniform1i(gl.getUniformLocation(diffuseProg, 'uPrev'), 0)
+        gl.uniform1i(diffuse.uPrev, 0)
         gl.activeTexture(gl.TEXTURE1)
         gl.bindTexture(gl.TEXTURE_2D, srcTex)
-        gl.uniform1i(gl.getUniformLocation(diffuseProg, 'uSource'), 1)
-        gl.uniform1f(
-          gl.getUniformLocation(diffuseProg, 'uFirst'),
-          ref.firstFrame && i === 0 ? 1.0 : 0.0
-        )
+        gl.uniform1i(diffuse.uSource, 1)
+        gl.uniform1f(diffuse.uFirst, ref.firstFrame && i === 0 ? 1.0 : 0.0)
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
         ref.pingPong = dst
 
@@ -1257,18 +1246,16 @@ export default function Page() {
       gl.useProgram(outputProg)
       gl.activeTexture(gl.TEXTURE0)
       gl.bindTexture(gl.TEXTURE_2D, fbo[ref.pingPong].tex)
-      gl.uniform1i(gl.getUniformLocation(outputProg, 'uDiffuse'), 0)
-      gl.uniform2f(gl.getUniformLocation(outputProg, 'uRes'), w, h)
-      gl.uniform1f(gl.getUniformLocation(outputProg, 'uEdge'), params.edge)
-      gl.uniform1f(gl.getUniformLocation(outputProg, 'uPaper'), params.paper)
+      gl.uniform1i(output.uDiffuse, 0)
+      gl.uniform2f(output.uRes, w, h)
+      gl.uniform1f(output.uEdge, params.edge)
+      gl.uniform1f(output.uPaper, params.paper)
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     }
 
     const renderFinal = (time: number) => {
-      const { cols, rows } = dims.current
+      const { cols, groundY, rows } = dims.current
       ctx.drawImage(glCanvas.current!, 0, 0, viewW, viewH)
-      ctx.font = font
-      ctx.textBaseline = 'top'
 
       const pal = paletteRef.current,
         bs = seed.current
@@ -1276,7 +1263,7 @@ export default function Page() {
       // Sparkles
       for (let s = 0; s < 15; s++) {
         const sx = ~~(rand(bs + 9000 + s) * cols),
-          sy = ~~(rand(bs + 9001 + s) * dims.current.groundY * 0.7)
+          sy = ~~(rand(bs + 9001 + s) * groundY * 0.7)
 
         const twinkle = Math.sin(time * 0.005 + s * 2) * 0.5 + 0.5
 
@@ -1290,10 +1277,7 @@ export default function Page() {
       for (let f = 0; f < 5; f++) {
         const fx = ~~(rand(bs + 9500 + f) * cols * 0.9 + cols * 0.05)
 
-        const fy = ~~(
-          dims.current.groundY +
-          rand(bs + 9501 + f) * (rows - dims.current.groundY) * 0.3
-        )
+        const fy = ~~(groundY + rand(bs + 9501 + f) * (rows - groundY) * 0.3)
 
         if (fx < cols && fy < rows) {
           ctx.fillStyle = `hsl(${pal.accent}, 85%, ${60 + (Math.sin(time * 0.002 + f) * 0.3 + 0.7) * 20}%)`
@@ -1341,12 +1325,10 @@ export default function Page() {
             // Grass strands over frog for depth
             ctx.fillStyle = `hsl(${pal.tree}, ${pal.treeS * 100}%, ${pal.treeL * 80}%)`
 
-            const grassChars = ['|', '/', '\\', '┃', '╱', '╲']
-
             for (let gx = fx - 2; gx <= fx + 3; gx++) {
               if (gx >= 0 && gx < cols && rand(bs + gx * 7 + fy * 13) > 0.6) {
                 const gc =
-                  grassChars[~~(rand(bs + gx * 11) * grassChars.length)]
+                  GRASS_CHARS[~~(rand(bs + gx * 11) * GRASS_CHARS.length)]
 
                 ctx.globalAlpha = 0.7
                 ctx.fillText(gc, colX[gx], rowY[fy])
@@ -1366,16 +1348,15 @@ export default function Page() {
         return
       }
 
-      const { gl: ffGl, prog } = ff,
+      const { gl: ffGl, prog, uniforms } = ff,
         c = fireflyCanvas.current!
 
       ffGl.viewport(0, 0, c.width, c.height)
-      ffGl.clearColor(0, 0, 0, 0)
       ffGl.clear(ffGl.COLOR_BUFFER_BIT)
       ffGl.useProgram(prog)
-      ffGl.uniform2f(ffGl.getUniformLocation(prog, 'uRes'), c.width, c.height)
-      ffGl.uniform1f(ffGl.getUniformLocation(prog, 'uTime'), time)
-      ffGl.uniform1f(ffGl.getUniformLocation(prog, 'uSeed'), seed.current)
+      ffGl.uniform2f(uniforms.uRes, c.width, c.height)
+      ffGl.uniform1f(uniforms.uTime, time)
+      ffGl.uniform1f(uniforms.uSeed, seed.current)
       ffGl.drawArrays(ffGl.TRIANGLE_STRIP, 0, 4)
     }
 
@@ -1399,7 +1380,7 @@ export default function Page() {
 
       asciiCanvas.current!.width = ~~(w * dpr)
       asciiCanvas.current!.height = ~~(h * dpr)
-      const aCtx = asciiCanvas.current!.getContext('2d')!
+      const aCtx = asciiCtx!
       aCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
       aCtx.font = font
       aCtx.textBaseline = 'top'
@@ -1493,4 +1474,82 @@ export default function Page() {
   }, [])
 
   return <canvas ref={canvasRef} className="fixed inset-0" />
+}
+
+interface Cloud {
+  dir: number
+  seed: number
+  speed: number
+  w: number
+  x: number
+  y: number
+}
+
+interface FireflyRef {
+  gl: WebGLRenderingContext
+  prog: WebGLProgram
+  uniforms: FireflyUniforms
+}
+
+interface FireflyUniforms {
+  uRes: WebGLUniformLocation
+  uSeed: WebGLUniformLocation
+  uTime: WebGLUniformLocation
+}
+
+interface Frog {
+  b: number
+  h: number
+  x: number
+  y: number
+}
+
+interface GlFbo {
+  fb: WebGLFramebuffer
+  tex: WebGLTexture
+}
+
+interface GlRef {
+  diffuseProg: WebGLProgram
+  fbo: [GlFbo, GlFbo]
+  firstFrame: boolean
+  gl: WebGLRenderingContext
+  outputProg: WebGLProgram
+  pingPong: number
+  srcTex: WebGLTexture
+  uniforms: GlUniforms
+}
+
+interface GlUniforms {
+  diffuse: GlUniformsDiffuse
+  output: GlUniformsOutput
+}
+
+interface GlUniformsDiffuse {
+  uBleed: WebGLUniformLocation
+  uFirst: WebGLUniformLocation
+  uPrev: WebGLUniformLocation
+  uRes: WebGLUniformLocation
+  uSource: WebGLUniformLocation
+  uSplatter: WebGLUniformLocation
+  uTime: WebGLUniformLocation
+}
+
+interface GlUniformsOutput {
+  uDiffuse: WebGLUniformLocation
+  uEdge: WebGLUniformLocation
+  uPaper: WebGLUniformLocation
+  uRes: WebGLUniformLocation
+}
+
+interface Seg {
+  b: number
+  c?: string
+  h: number
+  l: number
+  p: number
+  s: number
+  t?: number
+  x: number
+  y: number
 }
