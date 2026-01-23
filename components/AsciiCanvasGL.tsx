@@ -224,7 +224,15 @@ export default function AsciiCanvasGL({
       }
 
       const time = (t - t0) * speed
-      const context: Context = { cols, frame: frame++, rows, time }
+
+      const context: Context = {
+        cols,
+        frame: frame++,
+        height: h,
+        rows,
+        time,
+        width: w
+      }
 
       for (let y = 0; y < rows; y++) {
         for (let x = 0; x < cols; x++) {

@@ -6,6 +6,7 @@ import type { Buffer, Context, MainFn, Pointer, PostFn } from '@/types/ascii'
 
 export default function AsciiCanvas({
   bg = '#fff',
+  canvasRef,
   className = 'fixed inset-0',
   fg = '#000',
   fontSize = 12,
@@ -13,7 +14,8 @@ export default function AsciiCanvas({
   post,
   speed = 1
 }: AsciiCanvasProps) {
-  const ref = useRef<HTMLCanvasElement>(null)
+  const internalRef = useRef<HTMLCanvasElement>(null)
+  const ref = canvasRef || internalRef
 
   useEffect(() => {
     const canvas = ref.current
@@ -104,7 +106,15 @@ export default function AsciiCanvas({
       ctx.fillStyle = bg
       ctx.fillRect(0, 0, viewW, viewH)
       const time = (t - t0) * speed
-      const context: Context = { cols, frame: frame++, rows, time }
+
+      const context: Context = {
+        cols,
+        frame: frame++,
+        height: viewH,
+        rows,
+        time,
+        width: viewW
+      }
 
       let lastFill = bg
 
@@ -193,6 +203,7 @@ export default function AsciiCanvas({
 
 export interface AsciiCanvasProps {
   bg?: string
+  canvasRef?: React.RefObject<HTMLCanvasElement | null>
   className?: string
   fg?: string
   fontSize?: number

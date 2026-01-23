@@ -19,8 +19,14 @@
   }
 }
 
-body {
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
+@layer base {
+  html, body {
+    overflow: hidden;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
 }
